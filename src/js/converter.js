@@ -38,14 +38,34 @@ export function magnetToTorrentBatch(text) {
  */
 export async function torrentToMagnet(file) {
   try {
-    console.log('Processing file:', file.name, 'size:', file.size, 'type:', file.type);
-    const buffer = await file.arrayBuffer();
+    console.log('File object:', {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      lastModified: file.lastModified,
+      constructor: file.constructor.name
+    });
+
+    // 使用 FileReader 替代 arrayBuffer() 来排查问题
+    const buffer = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('FileReader failed'));
+      reader.readAsArrayBuffer(file);
+    });
+
     console.log('ArrayBuffer size:', buffer.byteLength);
+
+    // 检查 buffer 的前几个字节
+    const firstBytes = new Uint8Array(buffer.slice(0, 20));
+    console.log('First 20 bytes:', Array.from(firstBytes).map(b => b.toString(16).padStart(2, '0')).join(' '));
+
     const info = await parseTorrent(buffer);
     const magnetUri = generateMagnetUri(info);
     return { success: true, fileName: file.name, magnetUri, infoHash: info.infoHash };
   } catch (e) {
     console.error('Error processing file:', file.name, e);
+    console.error('Error stack:', e.stack);
     return { success: false, fileName: file.name, error: e.message };
   }
 }
