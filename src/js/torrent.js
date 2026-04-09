@@ -116,17 +116,56 @@ export function generateTorrentBlob(magnetInfo) {
 }
 
 /**
- * 计算 SHA-1 哈希（浏览器原生 SubtleCrypto）
+ * 计算 SHA-1 哈希
+ * 优先使用 crypto.subtle（安全上下文），不可用时降级为纯 JS 实现
  * @param {Uint8Array} data
  * @returns {Promise<ArrayBuffer>}
  */
 async function awaitSha1(data) {
   const subtle = window.crypto?.subtle || self.crypto?.subtle;
-  if (!subtle) {
-    throw new Error('浏览器不支持 crypto.subtle API');
+  if (subtle) {
+    return subtle.digest('SHA-1', data);
   }
-  return subtle.digest('SHA-1', data);
+  return sha1Fallback(data);
 }
+
+/**
+ * 纯 JS SHA-1 实现（非安全上下文 fallback）
+ */
+function sha1Fallback(data) {
+  let h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
+
+  const msg = new Uint8Array(data);
+  const len = msg.length * 8;
+  msg.push(0x80);
+  while (msg.length % 64 !== 56) msg.push(0);
+  for (let i = 0; i < 8; i++) msg.push((len >>> (i * 8)) & 0xff);
+
+  const w = new Int32Array(80);
+  for (let offset = 0; offset < msg.length; offset += 64) {
+    for (let i = 0; i < 16; i++) {
+      w[i] = (msg[offset + i * 4] << 24) | (msg[offset + i * 4 + 1] << 16) | (msg[offset + i * 4 + 2] << 8) | msg[offset + i * 4 + 3];
+    }
+    for (let i = 16; i < 80; i++) {
+      w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4;
+    for (let i = 0; i < 80; i++) {
+      const f = i < 20 ? (b & c) | (~b & d) : i < 40 ? b ^ c ^ d : i < 60 ? (b & c) | (b & d) | (c & d) : b ^ c ^ d;
+      const k = i < 20 ? 0x5A827999 : i < 40 ? 0x6ED9EBA1 : i < 60 ? 0x8F1BBCDC : 0xCA62C1D6;
+      const t = (rotl(a, 5) + f + e + k + w[i]) | 0;
+      e = d; d = c; c = rotl(b, 30); b = a; a = t;
+    }
+    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0; h4 = (h4 + e) | 0;
+  }
+
+  const result = new ArrayBuffer(20);
+  const view = new DataView(result);
+  view.setUint32(0, h0); view.setUint32(4, h1); view.setUint32(8, h2); view.setUint32(12, h3); view.setUint32(16, h4);
+  return result;
+}
+
+function rotl(n, c) { return (n << c) | (n >>> (32 - c)); }
 
 function arrayBufferToHex(buffer) {
   return Array.from(new Uint8Array(buffer))
