@@ -135,7 +135,7 @@ async function awaitSha1(data) {
 function sha1Fallback(data) {
   let h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
 
-  const msg = new Uint8Array(data);
+  const msg = Array.from(data);
   const len = msg.length * 8;
   msg.push(0x80);
   while (msg.length % 64 !== 56) msg.push(0);
