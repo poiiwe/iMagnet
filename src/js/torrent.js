@@ -10,9 +10,17 @@ import { decode, encode } from './bencode.js';
  * @returns {{ infoHash: string, name: string, announce: string|null, announceList: string[][], isPrivate: boolean, pieceLength: number|null, pieces: Uint8Array|null, length: number|null, files: Array|null }}
  */
 export async function parseTorrent(buffer) {
+  if (!buffer || buffer.byteLength === 0) {
+    throw new Error('文件为空或读取失败');
+  }
+
   const data = decode(new Uint8Array(buffer));
 
-  if (!data || typeof data !== 'object' || !data.info) {
+  if (!data || typeof data !== 'object') {
+    throw new Error('无效的 .torrent 文件：根节点不是字典');
+  }
+
+  if (!data.info) {
     throw new Error('无效的 .torrent 文件：缺少 info 字段');
   }
 

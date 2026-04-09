@@ -204,7 +204,14 @@ dropZone.addEventListener('click', () => {
 
 torrentFileInput.addEventListener('change', (e) => {
   if (e.target.files.length > 0) {
-    handleTorrentFiles(e.target.files);
+    const files = Array.from(e.target.files).filter(f =>
+      f.name.endsWith('.torrent') || f.type === 'application/x-bittorrent'
+    );
+    if (files.length === 0) {
+      showError(torrentError, '请选择 .torrent 文件');
+      return;
+    }
+    handleTorrentFiles(files);
   }
 });
 
@@ -252,11 +259,7 @@ async function handleTorrentFiles(files) {
 
   const results = await torrentToMagnetBatch(files);
 
-  if (results.every(r => !r.success)) {
-    showError(torrentError, '所有文件均无效，请检查文件格式');
-    return;
-  }
-
+  // 总是显示结果区域，让用户看到具体错误
   torrentResults.classList.remove('hidden');
 
   const successResults = [];
@@ -269,7 +272,12 @@ async function handleTorrentFiles(files) {
     } else {
       const item = createErrorItem(result.fileName, result.error);
       torrentResultsList.appendChild(item);
+      requestAnimationFrame(() => item.classList.add('animate-fade-in-up'));
     }
+  }
+
+  if (successResults.length === 0) {
+    showError(torrentError, '所有文件均无效，请检查下方的错误详情');
   }
 
   if (successResults.length > 1) {

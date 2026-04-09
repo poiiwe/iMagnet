@@ -38,11 +38,14 @@ export function magnetToTorrentBatch(text) {
  */
 export async function torrentToMagnet(file) {
   try {
+    console.log('Processing file:', file.name, 'size:', file.size, 'type:', file.type);
     const buffer = await file.arrayBuffer();
+    console.log('ArrayBuffer size:', buffer.byteLength);
     const info = await parseTorrent(buffer);
     const magnetUri = generateMagnetUri(info);
     return { success: true, fileName: file.name, magnetUri, infoHash: info.infoHash };
   } catch (e) {
+    console.error('Error processing file:', file.name, e);
     return { success: false, fileName: file.name, error: e.message };
   }
 }
