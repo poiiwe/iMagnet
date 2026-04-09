@@ -121,7 +121,11 @@ export function generateTorrentBlob(magnetInfo) {
  * @returns {Promise<ArrayBuffer>}
  */
 async function awaitSha1(data) {
-  return crypto.subtle.digest('SHA-1', data);
+  const subtle = window.crypto?.subtle || self.crypto?.subtle;
+  if (!subtle) {
+    throw new Error('浏览器不支持 crypto.subtle API');
+  }
+  return subtle.digest('SHA-1', data);
 }
 
 function arrayBufferToHex(buffer) {
