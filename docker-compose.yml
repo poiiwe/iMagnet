@@ -1,6 +1,7 @@
 services:
   web:
     build: .
+    container_name: imagnet
     ports:
       - "8080:80"
     restart: unless-stopped
