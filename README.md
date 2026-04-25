@@ -1,6 +1,6 @@
 # Magnet ↔ Torrent 转换器
 
-![imagnet](https://raw.githubusercontent.com/poiiwe/iMagnet/master/imagnet.png)
+![imagnet.png](https://raw.githubusercontent.com/poiiwe/iMagnet/master/imagnet.png)
 
 纯前端磁力链接与种子文件互转工具，数据不离开浏览器。
 
