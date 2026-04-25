@@ -52,33 +52,49 @@ export function parseMagnetUri(uri) {
 
 /**
  * 根据 torrent 信息生成 magnet URI
- * @param {{ infoHash: string, name: string, announce: string|null, announceList: string[][] }} torrentInfo
+ * @param {{ infoHash: string, name?: string|null, announce?: string|null, announceList?: string[][], trackers?: string[] }} torrentInfo
+ * @param {{ includeName?: boolean, includeTrackers?: boolean }} [options]
  * @returns {string}
  */
-export function generateMagnetUri(torrentInfo) {
+export function generateMagnetUri(torrentInfo, { includeName = false, includeTrackers = false } = {}) {
   const parts = [`xt=${BTIH_PREFIX}${torrentInfo.infoHash}`];
 
-  if (torrentInfo.name) {
+  if (includeName && torrentInfo.name) {
     parts.push(`dn=${encodeURIComponent(torrentInfo.name)}`);
   }
 
-  // 收集所有 tracker（去重）
-  const trackerSet = new Set();
+  if (includeTrackers) {
+    for (const tracker of collectTrackers(torrentInfo)) {
+      parts.push(`tr=${encodeURIComponent(tracker)}`);
+    }
+  }
+
+  return `magnet:?${parts.join('&')}`;
+}
+
+/**
+ * 合并 announce / announceList / trackers 并按出现顺序去重
+ * @param {{ announce?: string|null, announceList?: string[][], trackers?: string[] }} torrentInfo
+ * @returns {string[]}
+ */
+export function collectTrackers(torrentInfo) {
+  const set = new Set();
   if (torrentInfo.announce) {
-    trackerSet.add(torrentInfo.announce);
+    set.add(torrentInfo.announce);
   }
   if (torrentInfo.announceList) {
     for (const tier of torrentInfo.announceList) {
       for (const tracker of tier) {
-        trackerSet.add(tracker);
+        set.add(tracker);
       }
     }
   }
-  for (const tracker of trackerSet) {
-    parts.push(`tr=${encodeURIComponent(tracker)}`);
+  if (torrentInfo.trackers) {
+    for (const tracker of torrentInfo.trackers) {
+      set.add(tracker);
+    }
   }
-
-  return `magnet:?${parts.join('&')}`;
+  return Array.from(set);
 }
 
 /**

@@ -2,8 +2,8 @@
  * 入口文件 - UI 交互逻辑
  */
 
-import '../css/style.css';
 import { magnetToTorrentBatch, torrentToMagnetBatch } from './converter.js';
+import { generateMagnetUri } from './magnet.js';
 
 // --- 主题切换 ---
 const THEME_KEY = 'theme';
@@ -51,18 +51,24 @@ mqDark.addEventListener('change', () => {
 applyTheme(getMode());
 
 // --- Tab 切换 ---
-const tabs = document.querySelectorAll('.tab');
+const tabs = document.querySelectorAll('[role="tab"]');
 const tabContents = document.querySelectorAll('.tab-panel');
 
 tabs.forEach(tab => {
   tab.addEventListener('click', () => {
     const target = tab.dataset.tab;
 
-    tabs.forEach(t => t.classList.remove('tab-active'));
-    tab.classList.add('tab-active');
+    tabs.forEach(t => {
+      t.classList.remove('btn-primary');
+      t.classList.add('btn-ghost');
+    });
+    tab.classList.remove('btn-ghost');
+    tab.classList.add('btn-primary');
 
-    tabContents.forEach(c => c.classList.add('hidden'));
-    document.getElementById(target).classList.remove('hidden');
+    tabContents.forEach(c => c.classList.add('hidden', 'opacity-0'));
+    const targetPanel = document.getElementById(target);
+    targetPanel.classList.remove('hidden');
+    requestAnimationFrame(() => targetPanel.classList.remove('opacity-0'));
   });
 });
 
@@ -112,7 +118,7 @@ magnetConvertBtn.addEventListener('click', () => {
     }
   }
 
-  if (successResults.length > 1) {
+  if (successResults.length >= 1) {
     magnetDownloadAllBtn.classList.remove('hidden');
     magnetDownloadAllBtn.disabled = false;
     magnetSelectAll.checked = true;
@@ -191,6 +197,65 @@ const torrentResultsList = document.getElementById('torrent-results-list');
 const torrentCopyAllBtn = document.getElementById('torrent-copy-all-btn');
 const torrentSelectAll = document.getElementById('torrent-select-all');
 const torrentCount = document.getElementById('torrent-count');
+const includeTrackersToggle = document.getElementById('torrent-include-trackers');
+const includeNameToggle = document.getElementById('torrent-include-name');
+
+// --- Tracker 包含开关偏好持久化 ---
+const INCLUDE_TRACKERS_KEY = 'magnet-include-trackers';
+
+function getIncludeTrackers() {
+  return localStorage.getItem(INCLUDE_TRACKERS_KEY) === '1';
+}
+
+function setIncludeTrackers(value) {
+  localStorage.setItem(INCLUDE_TRACKERS_KEY, value ? '1' : '0');
+}
+
+includeTrackersToggle.checked = getIncludeTrackers();
+
+includeTrackersToggle.addEventListener('change', () => {
+  setIncludeTrackers(includeTrackersToggle.checked);
+  refreshAllTorrentResultItems();
+});
+
+// --- 名称(dn) 包含开关偏好持久化 ---
+const INCLUDE_NAME_KEY = 'magnet-include-name';
+
+function getIncludeName() {
+  return localStorage.getItem(INCLUDE_NAME_KEY) === '1';
+}
+
+function setIncludeName(value) {
+  localStorage.setItem(INCLUDE_NAME_KEY, value ? '1' : '0');
+}
+
+includeNameToggle.checked = getIncludeName();
+
+includeNameToggle.addEventListener('change', () => {
+  setIncludeName(includeNameToggle.checked);
+  refreshAllTorrentResultItems();
+});
+
+function refreshAllTorrentResultItems() {
+  const items = torrentResultsList.querySelectorAll('.result-item');
+  items.forEach(item => {
+    if (item._torrentInfo) {
+      regenerateMagnetForItem(item);
+    }
+  });
+}
+
+function regenerateMagnetForItem(item) {
+  const uri = generateMagnetUri(item._torrentInfo, {
+    includeName: getIncludeName(),
+    includeTrackers: getIncludeTrackers(),
+  });
+  item._magnetUri = uri;
+  const textarea = item.querySelector('textarea');
+  if (textarea) {
+    textarea.value = uri;
+  }
+}
 
 // 触屏设备检测 — 动态调整上传区域提示文案
 if ('ontouchstart' in window) {
@@ -257,7 +322,7 @@ async function handleTorrentFiles(files) {
   torrentSelectAll.checked = false;
   torrentSelectAll.indeterminate = false;
 
-  const results = await torrentToMagnetBatch(files);
+  const results = await torrentToMagnetBatch(files, { includeName: getIncludeName(), includeTrackers: getIncludeTrackers() });
 
   // 总是显示结果区域，让用户看到具体错误
   torrentResults.classList.remove('hidden');
@@ -280,7 +345,7 @@ async function handleTorrentFiles(files) {
     showError(torrentError, '所有文件均无效，请检查下方的错误详情');
   }
 
-  if (successResults.length > 1) {
+  if (successResults.length >= 1) {
     torrentCopyAllBtn.classList.remove('hidden');
     torrentCopyAllBtn.disabled = false;
     torrentSelectAll.checked = true;
@@ -315,6 +380,11 @@ function createTorrentResultItem(result) {
   item.className = 'flex items-start gap-2.5 px-4 py-2.5 border-b border-base-300 last:border-b-0 opacity-0 transition-colors hover:bg-base-200';
   item.classList.add('result-item');
   item._magnetUri = result.magnetUri;
+  item._torrentInfo = {
+    infoHash: result.infoHash,
+    name: result.name,
+    trackers: result.trackers,
+  };
 
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
@@ -343,7 +413,7 @@ function createTorrentResultItem(result) {
   magnetRow.className = 'flex gap-1.5 items-stretch';
 
   const textarea = document.createElement('textarea');
-  textarea.className = 'textarea textarea-bordered flex-1 min-w-0 text-[0.6875rem] font-mono leading-relaxed bg-base-200 break-all resize-none h-10 py-1';
+  textarea.className = 'textarea textarea-bordered flex-1 min-w-0 text-xs font-mono leading-relaxed bg-base-200 break-all resize-none h-11 py-1 focus:outline-none focus:ring-0';
   textarea.value = result.magnetUri;
   textarea.readOnly = true;
 
@@ -351,7 +421,7 @@ function createTorrentResultItem(result) {
   copyBtn.className = 'btn btn-sm btn-outline btn-primary shrink-0';
   copyBtn.textContent = '复制';
   copyBtn.addEventListener('click', () => {
-    copyToClipboard(result.magnetUri, copyBtn);
+    copyToClipboard(item._magnetUri, copyBtn);
     flashResultItem(item);
   });
 

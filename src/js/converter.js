@@ -2,7 +2,7 @@
  * 转换核心逻辑模块
  */
 
-import { parseMagnetUri, generateMagnetUri } from './magnet.js';
+import { parseMagnetUri, generateMagnetUri, collectTrackers } from './magnet.js';
 import { parseTorrent, generateTorrentBlob } from './torrent.js';
 
 /**
@@ -34,14 +34,26 @@ export function magnetToTorrentBatch(text) {
 /**
  * 单个种子文件转磁力链接
  * @param {File} file
- * @returns {Promise<{ success: true, fileName: string, magnetUri: string, infoHash: string } | { success: false, fileName: string, error: string }>}
+ * @param {{ includeName?: boolean, includeTrackers?: boolean }} [options]
+ * @returns {Promise<{ success: true, fileName: string, magnetUri: string, infoHash: string, name: string, trackers: string[] } | { success: false, fileName: string, error: string }>}
  */
-export async function torrentToMagnet(file) {
+export async function torrentToMagnet(file, options = {}) {
   try {
     const buffer = await file.arrayBuffer();
     const info = await parseTorrent(buffer);
-    const magnetUri = generateMagnetUri(info);
-    return { success: true, fileName: file.name, magnetUri, infoHash: info.infoHash };
+    const trackers = collectTrackers(info);
+    const magnetUri = generateMagnetUri(
+      { infoHash: info.infoHash, name: info.name, trackers },
+      { includeName: !!options.includeName, includeTrackers: !!options.includeTrackers }
+    );
+    return {
+      success: true,
+      fileName: file.name,
+      magnetUri,
+      infoHash: info.infoHash,
+      name: info.name,
+      trackers,
+    };
   } catch (e) {
     return { success: false, fileName: file.name, error: e.message };
   }
@@ -50,8 +62,9 @@ export async function torrentToMagnet(file) {
 /**
  * 批量种子文件转磁力链接
  * @param {FileList|File[]} files
- * @returns {Promise<Array<{ success: true, fileName: string, magnetUri: string, infoHash: string } | { success: false, fileName: string, error: string }>>}
+ * @param {{ includeName?: boolean, includeTrackers?: boolean }} [options]
+ * @returns {Promise<Array<{ success: true, fileName: string, magnetUri: string, infoHash: string, name: string, trackers: string[] } | { success: false, fileName: string, error: string }>>}
  */
-export async function torrentToMagnetBatch(files) {
-  return Promise.all(Array.from(files).map(torrentToMagnet));
+export async function torrentToMagnetBatch(files, options = {}) {
+  return Promise.all(Array.from(files).map(file => torrentToMagnet(file, options)));
 }
