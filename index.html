@@ -24,17 +24,17 @@
         </svg>
         <div>
           <h1 class="text-2xl font-semibold tracking-tight">Magnet ↔ Torrent</h1>
-          <p class="text-xs text-base-content/50 mt-0.5">纯前端转换，数据不离开浏览器</p>
+          <p class="text-xs text-base-content/60 mt-0.5">纯前端转换，数据不离开浏览器</p>
         </div>
       </div>
       <div class="flex items-center gap-1">
-        <a href="https://github.com/poiiwe/iMagnet" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm btn-circle" title="GitHub 仓库">
+        <a href="https://github.com/poiiwe/iMagnet" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm btn-circle" title="GitHub 仓库" aria-label="GitHub 仓库（新窗口打开）">
           <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 22v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 19 4.77 5.07 5.07 0 0 0 18.91.64S17.73.23 15 2.18a13.38 13.38 0 0 0-7 0C5.27.23 4.09.64 4.09.64A5.07 5.07 0 0 0 4 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7a3.37 3.37 0 0 0-.94 2.58V22"/>
             <path d="M9 18c-4.51 2-4.51-2-7-2"/>
           </svg>
         </a>
-        <button id="theme-toggle" class="btn btn-ghost btn-sm btn-circle" title="跟随系统">
+        <button id="theme-toggle" class="btn btn-ghost btn-sm btn-circle" title="跟随系统" aria-label="切换主题，当前：跟随系统">
           <!-- 浅色：太阳 -->
           <svg class="w-5 h-5 theme-icon-sun hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><circle cx="12" cy="12" r="5"/><path stroke-linecap="round" d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           <!-- 暗色：月亮 -->
@@ -45,17 +45,17 @@
       </div>
     </header>
 
-    <div role="tablist" class="join w-full mb-5">
-      <button role="tab" class="join-item btn btn-sm btn-primary w-1/2" data-tab="magnet-to-torrent">磁力转种子</button>
-      <button role="tab" class="join-item btn btn-sm btn-ghost w-1/2" data-tab="torrent-to-magnet">种子转磁力</button>
+    <div role="tablist" aria-label="转换方向" class="join w-full mb-5">
+      <button role="tab" id="tab-magnet-to-torrent" aria-selected="true" aria-controls="magnet-to-torrent" class="join-item btn btn-sm btn-primary w-1/2" data-tab="magnet-to-torrent">磁力转种子</button>
+      <button role="tab" id="tab-torrent-to-magnet" aria-selected="false" aria-controls="torrent-to-magnet" tabindex="-1" class="join-item btn btn-sm btn-ghost w-1/2" data-tab="torrent-to-magnet">种子转磁力</button>
     </div>
 
     <!-- 磁力转种子 -->
-    <section id="magnet-to-torrent" class="tab-panel">
+    <section id="magnet-to-torrent" class="tab-panel" role="tabpanel" aria-labelledby="tab-magnet-to-torrent" tabindex="0">
       <div class="card bg-base-100 border border-base-300 p-5 mb-4">
         <div class="relative">
           <textarea id="magnet-input" class="textarea textarea-bordered w-full font-mono text-sm leading-relaxed h-36 pt-7 focus:outline-none focus:ring-0 peer" placeholder=" "></textarea>
-          <label for="magnet-input" class="absolute left-3 top-3 text-sm text-base-content/50 transition-all duration-200 peer-focus:top-1.5 peer-focus:text-xs peer-focus:text-primary peer-[:not(:placeholder-shown)]:top-1.5 peer-[:not(:placeholder-shown)]:text-xs peer-[:not(:placeholder-shown)]:text-primary">输入磁力链接（每行一个，支持批量）</label>
+          <label for="magnet-input" class="absolute left-3 right-3 top-3 text-sm text-base-content/60 truncate transition-all duration-200 peer-focus:top-1.5 peer-focus:text-xs peer-focus:text-primary peer-[:not(:placeholder-shown)]:top-1.5 peer-[:not(:placeholder-shown)]:text-xs peer-[:not(:placeholder-shown)]:text-primary">输入磁力链接（每行一个，支持批量）</label>
         </div>
         <div id="magnet-error" class="alert alert-error mt-2 hidden">
           <span></span>
@@ -65,21 +65,25 @@
       <div id="magnet-results" class="card bg-base-100 border border-base-300 hidden">
         <div class="flex items-center justify-between p-4 border-b border-base-300 gap-3">
           <div class="flex items-center gap-2 min-w-0">
-            <input type="checkbox" id="magnet-select-all" class="checkbox checkbox-primary checkbox-sm" />
+            <input type="checkbox" id="magnet-select-all" class="checkbox checkbox-primary checkbox-sm" aria-label="全选" />
             <span class="text-sm font-medium text-base-content/60 whitespace-nowrap">转换结果</span>
             <span id="magnet-count" class="badge badge-ghost badge-sm hidden"></span>
           </div>
-          <button id="magnet-download-all-btn" class="btn btn-outline btn-primary btn-sm hidden" disabled>下载选中</button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button id="magnet-remove-btn" class="btn btn-outline btn-error btn-sm hidden" disabled>移除选中</button>
+            <button id="magnet-download-all-btn" class="btn btn-outline btn-primary btn-sm hidden" disabled>下载选中</button>
+          </div>
         </div>
         <div id="magnet-results-list"></div>
+        <div id="magnet-pager" class="hidden border-t border-base-300"></div>
       </div>
     </section>
 
     <!-- 种子转磁力 -->
-    <section id="torrent-to-magnet" class="tab-panel hidden">
+    <section id="torrent-to-magnet" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-torrent-to-magnet" tabindex="0">
       <div class="card bg-base-100 border border-base-300 p-5 mb-4">
-        <div id="drop-zone" class="border border-dashed border-base-300 rounded-lg py-14 px-5 min-h-[120px] flex items-center justify-center text-center cursor-pointer transition-colors hover:border-base-content/30 hover:bg-base-200">
-          <p class="text-sm text-base-content/50 leading-relaxed drop-zone-text">拖拽 .torrent 文件到这里<br>或 <span class="text-primary font-medium underline underline-offset-2">点击选择文件</span></p>
+        <div id="drop-zone" role="button" tabindex="0" aria-label="选择或拖入 .torrent 文件" class="border border-dashed border-base-300 rounded-lg py-14 px-5 min-h-[120px] flex items-center justify-center text-center cursor-pointer transition-colors hover:border-base-content/30 hover:bg-base-200">
+          <p class="text-sm text-base-content/60 leading-relaxed drop-zone-text">拖拽 .torrent 文件到这里<br>或 <span class="text-primary font-medium underline underline-offset-2">点击选择文件</span></p>
           <input id="torrent-file-input" type="file" accept=".torrent" multiple class="hidden" />
         </div>
         <label for="torrent-include-name" class="flex items-center gap-2 mt-3 cursor-pointer select-none" title="保留种子原始显示名，关闭时生成的磁链更短">
@@ -95,19 +99,23 @@
         </div>
       </div>
       <div id="torrent-results" class="card bg-base-100 border border-base-300 hidden">
-        <div class="flex items-center justify-between p-4 border-b border-base-300 gap-3">
+        <div id="torrent-results-header" class="flex items-center justify-between p-4 border-b border-base-300 gap-3">
           <div class="flex items-center gap-2 min-w-0">
-            <input type="checkbox" id="torrent-select-all" class="checkbox checkbox-primary checkbox-sm" />
+            <input type="checkbox" id="torrent-select-all" class="checkbox checkbox-primary checkbox-sm" aria-label="全选" />
             <span class="text-sm font-medium text-base-content/60 whitespace-nowrap">转换结果</span>
             <span id="torrent-count" class="badge badge-ghost badge-sm hidden"></span>
           </div>
-          <button id="torrent-copy-all-btn" class="btn btn-outline btn-primary btn-sm hidden" disabled>复制选中</button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button id="torrent-remove-btn" class="btn btn-outline btn-error btn-sm hidden" disabled>移除选中</button>
+            <button id="torrent-copy-all-btn" class="btn btn-outline btn-primary btn-sm hidden" disabled>复制选中</button>
+          </div>
         </div>
         <div id="torrent-results-list"></div>
+        <div id="torrent-pager" class="hidden border-t border-base-300"></div>
       </div>
     </section>
 
-    <footer class="text-center mt-8 pt-4 border-t border-base-300 text-xs text-base-content/40">
+    <footer class="text-center mt-8 pt-4 border-t border-base-300 text-xs text-base-content/60">
       <p class="flex items-center justify-center gap-1.5">
         所有数据仅在浏览器本地处理，不会上传到任何服务器
         <a href="https://github.com/poiiwe/iMagnet" target="_blank" rel="noopener noreferrer" class="inline-flex hover:text-primary transition-colors" title="GitHub 仓库">

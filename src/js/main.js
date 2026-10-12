@@ -4,6 +4,7 @@
 
 import { magnetToTorrentBatch, torrentToMagnetBatch } from './converter.js';
 import { generateMagnetUri } from './magnet.js';
+import { createPager } from './pager.js';
 
 // --- 主题切换 ---
 const THEME_KEY = 'theme';
@@ -26,6 +27,7 @@ function applyTheme(mode) {
   moonIcon.classList.toggle('hidden', mode !== 'dark');
   systemIcon.classList.toggle('hidden', mode !== 'system');
   themeToggle.title = MODE_LABELS[mode];
+  themeToggle.setAttribute('aria-label', `切换主题，当前：${MODE_LABELS[mode]}`);
 }
 
 function getMode() {
@@ -54,26 +56,79 @@ applyTheme(getMode());
 const tabs = document.querySelectorAll('[role="tab"]');
 const tabContents = document.querySelectorAll('.tab-panel');
 
-tabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    const target = tab.dataset.tab;
+function activateTab(tab, focus = false) {
+  const target = tab.dataset.tab;
 
-    tabs.forEach(t => {
-      t.classList.remove('btn-primary');
-      t.classList.add('btn-ghost');
-    });
-    tab.classList.remove('btn-ghost');
-    tab.classList.add('btn-primary');
-
-    tabContents.forEach(c => c.classList.add('hidden', 'opacity-0'));
-    const targetPanel = document.getElementById(target);
-    targetPanel.classList.remove('hidden');
-    requestAnimationFrame(() => targetPanel.classList.remove('opacity-0'));
+  tabs.forEach(t => {
+    t.classList.remove('btn-primary');
+    t.classList.add('btn-ghost');
+    t.setAttribute('aria-selected', 'false');
+    t.tabIndex = -1;
   });
+  tab.classList.remove('btn-ghost');
+  tab.classList.add('btn-primary');
+  tab.setAttribute('aria-selected', 'true');
+  tab.tabIndex = 0;
+  if (focus) tab.focus();
+
+  tabContents.forEach(c => c.classList.add('hidden', 'opacity-0'));
+  const targetPanel = document.getElementById(target);
+  targetPanel.classList.remove('hidden');
+  requestAnimationFrame(() => targetPanel.classList.remove('opacity-0'));
+}
+
+tabs.forEach(tab => {
+  tab.addEventListener('click', () => activateTab(tab));
+});
+
+// 方向键导航（WAI-ARIA Tabs 模式）
+document.querySelector('[role="tablist"]').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const tabArr = Array.from(tabs);
+  const idx = tabArr.indexOf(document.activeElement);
+  if (idx === -1) return;
+  e.preventDefault();
+  const next = tabArr[(idx + (e.key === 'ArrowRight' ? 1 : tabArr.length - 1)) % tabArr.length];
+  activateTab(next, true);
 });
 
 // --- 磁力转种子 ---
 const magnetInput = document.getElementById('magnet-input');
+
+// 输入框随内容自动增高（max-height 由 CSS 限制，超出后内部滚动）
+function autoGrowTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+magnetInput.addEventListener('input', () => autoGrowTextarea(magnetInput));
+
+// 粘贴时按 magnet:? 自动分行，避免多条磁链粘连（无需手动回车）
+magnetInput.addEventListener('paste', (e) => {
+  e.preventDefault();
+  const raw = (e.clipboardData || window.clipboardData).getData('text');
+  if (!raw) return;
+  // 在每个 magnet:? 前断行（开头除外），并压缩已有的空白/换行
+  const normalized = raw
+    .replace(/\s*\n\s*/g, '\n')
+    .replace(/magnet:\?/gi, (m, offset, str) =>
+      (offset === 0 || str[offset - 1] === '\n') ? m : '\n' + m)
+    .replace(/^\n+/, '');
+
+  const el = magnetInput;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const before = el.value.slice(0, start);
+  const after = el.value.slice(end);
+
+  let insert = normalized;
+  if (before && !before.endsWith('\n')) insert = '\n' + insert;
+  if (after && !insert.endsWith('\n')) insert += '\n';
+
+  el.value = before + insert + after;
+  const caret = (before + insert).length;
+  el.selectionStart = el.selectionEnd = caret;
+  autoGrowTextarea(el);
+});
 const magnetConvertBtn = document.getElementById('magnet-convert-btn');
 const magnetError = document.getElementById('magnet-error');
 const magnetResults = document.getElementById('magnet-results');
@@ -82,10 +137,159 @@ const magnetDownloadAllBtn = document.getElementById('magnet-download-all-btn');
 const magnetSelectAll = document.getElementById('magnet-select-all');
 const magnetCount = document.getElementById('magnet-count');
 
-magnetConvertBtn.addEventListener('click', () => {
+function setBtnLoading(btn, loading, text) {
+  btn.disabled = loading;
+  btn.textContent = loading ? text : btn.dataset.normalText;
+}
+
+// --- 数据驱动的选择状态（跨分页保持） ---
+// entries: { success, selected, ... } 选中态存在数据层，翻页不丢失
+
+function getSelectable(entries) {
+  return entries.filter(e => e.success);
+}
+
+function getSelected(entries) {
+  return entries.filter(e => e.success && e.selected);
+}
+
+function syncSelectionHeader(entries, selectAllEl, countEl, actionBtn, removeBtn) {
+  const selectable = getSelectable(entries);
+  const checked = getSelected(entries).length;
+  selectAllEl.checked = selectable.length > 0 && checked === selectable.length;
+  selectAllEl.indeterminate = checked > 0 && checked < selectable.length;
+  updateResultCount(countEl, checked, selectable.length);
+  actionBtn.disabled = checked === 0;
+  actionBtn.classList.toggle('hidden', selectable.length === 0);
+  if (removeBtn) {
+    removeBtn.disabled = checked === 0;
+    removeBtn.classList.toggle('hidden', selectable.length === 0);
+  }
+}
+
+// 同步当前可见行的选中样式与复选框（不做整页重渲染，避免点击闪烁）
+function syncVisibleRows(listEl) {
+  listEl.querySelectorAll('.result-item').forEach(item => {
+    const entry = item._entry;
+    if (!entry || !entry.success) return;
+    item.classList.toggle('row-selected', entry.selected);
+    const cb = item.querySelector('.result-checkbox');
+    if (cb) cb.checked = entry.selected;
+  });
+}
+
+// 全选 / 单选 / 行点选（Shift 范围选、Ctrl·Cmd 点选），委托给数据层，只注册一次
+function wireSelection(getEntries, setEntries, listEl, selectAllEl, countEl, actionBtn, removeBtn, pager) {
+  let anchorEntry = null; // Shift 范围选择的锚点
+
+  selectAllEl.addEventListener('change', () => {
+    getSelectable(getEntries()).forEach(e => { e.selected = selectAllEl.checked; });
+    // 只更新可见行样式，不做整页重渲染，点击即时反馈
+    syncVisibleRows(listEl);
+    syncSelectionHeader(getEntries(), selectAllEl, countEl, actionBtn, removeBtn);
+  });
+
+  listEl.addEventListener('change', (e) => {
+    if (!e.target.classList.contains('result-checkbox')) return;
+    const entry = e.target.closest('.result-item')?._entry;
+    if (!entry) return;
+    entry.selected = e.target.checked;
+    anchorEntry = entry;
+    syncVisibleRows(listEl);
+    syncSelectionHeader(getEntries(), selectAllEl, countEl, actionBtn, removeBtn);
+  });
+
+  // 行点击：空白处点击参与选择；按钮/链接/输入框等交互元素不触发
+  listEl.addEventListener('click', (e) => {
+    if (e.target.closest('button, a, input, textarea, select, label')) return;
+    const entry = e.target.closest('.result-item')?._entry;
+    if (!entry || !entry.success) return;
+
+    const entries = getEntries();
+    if (e.shiftKey && anchorEntry && entries.includes(anchorEntry)) {
+      // Shift：锚点到当前项的范围选择（按数据数组计算，跨页有效）
+      const from = entries.indexOf(anchorEntry);
+      const to = entries.indexOf(entry);
+      const [lo, hi] = from < to ? [from, to] : [to, from];
+      for (let i = lo; i <= hi; i++) {
+        if (entries[i].success) entries[i].selected = true;
+      }
+    } else {
+      // 普通点击 / Ctrl·Cmd 点选：切换当前项
+      entry.selected = !entry.selected;
+      anchorEntry = entry;
+    }
+
+    syncVisibleRows(listEl);
+    syncSelectionHeader(entries, selectAllEl, countEl, actionBtn, removeBtn);
+  });
+
+  // 移除选中：先即时更新头部状态，再从数据层删除并刷新（保持当前页）
+  removeBtn.addEventListener('click', () => {
+    const removed = getSelected(getEntries()).length;
+    if (removed === 0) return;
+    setEntries(getEntries().filter(e => !e.selected));
+    anchorEntry = null;
+    flashBtn(removeBtn, '移除选中', `已移除 ${removed} 项`);
+    syncSelectionHeader(getEntries(), selectAllEl, countEl, actionBtn, removeBtn);
+    pager.setData(getEntries(), { keepPage: true });
+  });
+}
+
+// --- 磁力转种子 ---
+const magnetRemoveBtn = document.getElementById('magnet-remove-btn');
+const magnetPager = createPager({
+  listEl: magnetResultsList,
+  pagerEl: document.getElementById('magnet-pager'),
+  renderItem: (entry) => entry.success
+    ? createMagnetResultItem(entry)
+    : createErrorItem(entry.input, entry.error),
+  onAfterRender: () => syncSelectionHeader(magnetEntries, magnetSelectAll, magnetCount, magnetDownloadAllBtn, magnetRemoveBtn),
+});
+
+let magnetEntries = [];
+wireSelection(() => magnetEntries, (v) => { magnetEntries = v; }, magnetResultsList, magnetSelectAll, magnetCount, magnetDownloadAllBtn, magnetRemoveBtn, magnetPager);
+
+// 批量下载：单文件直接下载，多文件打包为单个 zip（避免浏览器拦截一次手势内的多次下载）
+magnetDownloadAllBtn.addEventListener('click', async () => {
+  const selected = getSelected(magnetEntries);
+  if (selected.length === 0) return;
+
+  magnetDownloadAllBtn.disabled = true;
+  try {
+    if (selected.length === 1) {
+      downloadBlob(selected[0].blob, selected[0].name);
+    } else {
+      const { default: JSZip } = await import('jszip');
+      const zip = new JSZip();
+      const usedNames = new Set();
+      selected.forEach(entry => {
+        let name = entry.name;
+        let i = 1;
+        while (usedNames.has(name)) {
+          name = entry.name.replace(/\.torrent$/i, '') + `_${i++}.torrent`;
+        }
+        usedNames.add(name);
+        zip.file(name, entry.blob);
+      });
+      const blob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(blob, 'magnet-torrents.zip');
+    }
+    flashBtn(magnetDownloadAllBtn, '下载选中', '已下载');
+  } catch (e) {
+    showError(magnetError, `打包下载失败：${e.message || '未知错误'}`);
+  } finally {
+    magnetDownloadAllBtn.disabled = false;
+  }
+});
+
+magnetConvertBtn.dataset.normalText = magnetConvertBtn.textContent;
+
+magnetConvertBtn.addEventListener('click', async () => {
   hideError(magnetError);
   magnetResultsList.innerHTML = '';
   magnetDownloadAllBtn.classList.add('hidden');
+  magnetRemoveBtn.classList.add('hidden');
   magnetCount.classList.add('hidden');
   magnetSelectAll.checked = false;
   magnetSelectAll.indeterminate = false;
@@ -96,7 +300,16 @@ magnetConvertBtn.addEventListener('click', () => {
     return;
   }
 
-  const results = magnetToTorrentBatch(text);
+  // 大批量同步解析会阻塞主线程，先让按钮进入加载态并交出一帧
+  setBtnLoading(magnetConvertBtn, true, '转换中…');
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  let results;
+  try {
+    results = magnetToTorrentBatch(text);
+  } finally {
+    setBtnLoading(magnetConvertBtn, false);
+  }
 
   if (results.every(r => !r.success)) {
     showError(magnetError, '所有输入均无效，请检查磁力链接格式');
@@ -104,79 +317,38 @@ magnetConvertBtn.addEventListener('click', () => {
   }
 
   magnetResults.classList.remove('hidden');
-
-  const successResults = [];
-  for (const result of results) {
-    if (result.success) {
-      successResults.push(result);
-      const item = createMagnetResultItem(result);
-      magnetResultsList.appendChild(item);
-      requestAnimationFrame(() => item.classList.add('animate-fade-in-up'));
-    } else {
-      const item = createErrorItem(result.input, result.error);
-      magnetResultsList.appendChild(item);
-    }
-  }
-
-  if (successResults.length >= 1) {
-    magnetDownloadAllBtn.classList.remove('hidden');
-    magnetDownloadAllBtn.disabled = false;
-    magnetSelectAll.checked = true;
-    updateResultCount(magnetCount, successResults.length, successResults.length);
-
-    magnetSelectAll.onchange = () => {
-      const checkboxes = magnetResultsList.querySelectorAll('.result-checkbox');
-      checkboxes.forEach(cb => { cb.checked = magnetSelectAll.checked; });
-      const count = getCheckedCount(magnetResultsList);
-      updateResultCount(magnetCount, count, successResults.length);
-      magnetDownloadAllBtn.disabled = count === 0;
-    };
-
-    magnetResultsList.addEventListener('change', (e) => {
-      if (!e.target.classList.contains('result-checkbox')) return;
-      updateSelectAllState(magnetSelectAll, magnetResultsList);
-      const count = getCheckedCount(magnetResultsList);
-      updateResultCount(magnetCount, count, successResults.length);
-      magnetDownloadAllBtn.disabled = count === 0;
-    });
-
-    magnetDownloadAllBtn.onclick = () => {
-      const checkedItems = magnetResultsList.querySelectorAll('.result-checkbox:checked');
-      checkedItems.forEach(cb => {
-        const item = cb.closest('.result-item');
-        downloadBlob(item._blob, item._fileName);
-      });
-      flashBtn(magnetDownloadAllBtn, '下载选中', '已下载');
-    };
-  }
+  magnetEntries = results.map(r => ({ ...r, selected: r.success }));
+  magnetPager.setData(magnetEntries);
+  syncSelectionHeader(magnetEntries, magnetSelectAll, magnetCount, magnetDownloadAllBtn, magnetRemoveBtn);
 });
 
-function createMagnetResultItem(result) {
+function createMagnetResultItem(entry) {
   const item = document.createElement('div');
-  item.className = 'flex items-center gap-2.5 px-4 h-12 border-b border-base-300 last:border-b-0 opacity-0 transition-colors hover:bg-base-200';
+  item.className = 'flex items-center gap-2.5 px-4 h-12 border-b border-base-300 last:border-b-0 opacity-0 transition-colors hover:bg-base-200 cursor-pointer select-none';
   item.classList.add('result-item');
-  item._blob = result.blob;
-  item._fileName = result.name;
+  item._entry = entry;
+  item.classList.toggle('row-selected', entry.selected);
 
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.className = 'checkbox checkbox-primary checkbox-sm shrink-0 result-checkbox';
-  checkbox.checked = true;
+  checkbox.checked = entry.selected;
 
   const nameSpan = document.createElement('span');
   nameSpan.className = 'flex-1 min-w-0 text-sm font-medium truncate';
-  nameSpan.textContent = result.name;
-  nameSpan.title = result.name;
+  nameSpan.textContent = entry.name;
+  nameSpan.title = entry.name;
 
   const hashSpan = document.createElement('span');
-  hashSpan.className = 'text-[0.625rem] text-base-content/40 font-mono shrink-0 tracking-wide';
-  hashSpan.textContent = result.infoHash.substring(0, 8) + '...';
+  hashSpan.className = 'hidden min-[480px]:inline text-[0.625rem] text-base-content/40 font-mono shrink-0 tracking-wide';
+  hashSpan.textContent = entry.infoHash.substring(0, 8) + '...';
+  hashSpan.title = entry.infoHash;
 
   const downloadBtn = document.createElement('button');
   downloadBtn.className = 'btn btn-sm btn-primary shrink-0';
   downloadBtn.textContent = '下载';
   downloadBtn.addEventListener('click', () => {
-    downloadBlob(result.blob, result.name);
+    downloadBlob(entry.blob, entry.name);
     flashResultItem(item);
   });
 
@@ -199,6 +371,27 @@ const torrentSelectAll = document.getElementById('torrent-select-all');
 const torrentCount = document.getElementById('torrent-count');
 const includeTrackersToggle = document.getElementById('torrent-include-trackers');
 const includeNameToggle = document.getElementById('torrent-include-name');
+const torrentResultsHeader = document.getElementById('torrent-results-header');
+
+// --- 种子转磁力分页 ---
+const torrentRemoveBtn = document.getElementById('torrent-remove-btn');
+const torrentPager = createPager({
+  listEl: torrentResultsList,
+  pagerEl: document.getElementById('torrent-pager'),
+  renderItem: (entry) => entry.success
+    ? createTorrentResultItem(entry)
+    : createErrorItem(entry.fileName, entry.error),
+  onAfterRender: () => syncSelectionHeader(torrentEntries, torrentSelectAll, torrentCount, torrentCopyAllBtn, torrentRemoveBtn),
+});
+
+let torrentEntries = [];
+wireSelection(() => torrentEntries, (v) => { torrentEntries = v; }, torrentResultsList, torrentSelectAll, torrentCount, torrentCopyAllBtn, torrentRemoveBtn, torrentPager);
+
+torrentCopyAllBtn.addEventListener('click', () => {
+  const uris = getSelected(torrentEntries).map(e => e.magnetUri).join('\n');
+  if (!uris) return;
+  copyToClipboard(uris, torrentCopyAllBtn, '复制选中', '已复制');
+});
 
 // --- Tracker 包含开关偏好持久化 ---
 const INCLUDE_TRACKERS_KEY = 'magnet-include-trackers';
@@ -237,24 +430,15 @@ includeNameToggle.addEventListener('change', () => {
 });
 
 function refreshAllTorrentResultItems() {
-  const items = torrentResultsList.querySelectorAll('.result-item');
-  items.forEach(item => {
-    if (item._torrentInfo) {
-      regenerateMagnetForItem(item);
-    }
+  // 按当前开关重新生成所有条目的磁链（数据层），再刷新当前页
+  torrentEntries.forEach(entry => {
+    if (!entry.success) return;
+    entry.magnetUri = generateMagnetUri(
+      { infoHash: entry.infoHash, name: entry.name, trackers: entry.trackers },
+      { includeName: getIncludeName(), includeTrackers: getIncludeTrackers() }
+    );
   });
-}
-
-function regenerateMagnetForItem(item) {
-  const uri = generateMagnetUri(item._torrentInfo, {
-    includeName: getIncludeName(),
-    includeTrackers: getIncludeTrackers(),
-  });
-  item._magnetUri = uri;
-  const textarea = item.querySelector('textarea');
-  if (textarea) {
-    textarea.value = uri;
-  }
+  torrentPager.refresh();
 }
 
 // 触屏设备检测 — 动态调整上传区域提示文案
@@ -265,6 +449,14 @@ if ('ontouchstart' in window) {
 // 点击上传
 dropZone.addEventListener('click', () => {
   torrentFileInput.click();
+});
+
+// 键盘操作（Enter / Space）
+dropZone.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    torrentFileInput.click();
+  }
 });
 
 torrentFileInput.addEventListener('change', (e) => {
@@ -318,78 +510,54 @@ async function handleTorrentFiles(files) {
   hideError(torrentError);
   torrentResultsList.innerHTML = '';
   torrentCopyAllBtn.classList.add('hidden');
+  torrentRemoveBtn.classList.add('hidden');
   torrentCount.classList.add('hidden');
   torrentSelectAll.checked = false;
   torrentSelectAll.indeterminate = false;
 
-  const results = await torrentToMagnetBatch(files, { includeName: getIncludeName(), includeTrackers: getIncludeTrackers() });
+  // 加载态：禁用上传区并显示解析进度
+  const prevText = dropZoneText.innerHTML;
+  dropZone.classList.add('opacity-60', 'pointer-events-none');
+  dropZone.setAttribute('aria-busy', 'true');
+  dropZoneText.innerHTML = '<span class="loading loading-spinner loading-sm align-middle mr-2"></span>解析中…';
+
+  let results;
+  try {
+    results = await torrentToMagnetBatch(files, { includeName: getIncludeName(), includeTrackers: getIncludeTrackers() });
+  } finally {
+    dropZone.classList.remove('opacity-60', 'pointer-events-none');
+    dropZone.removeAttribute('aria-busy');
+    dropZoneText.innerHTML = prevText;
+  }
 
   // 总是显示结果区域，让用户看到具体错误
   torrentResults.classList.remove('hidden');
 
-  const successResults = [];
-  for (const result of results) {
-    if (result.success) {
-      successResults.push(result);
-      const item = createTorrentResultItem(result);
-      torrentResultsList.appendChild(item);
-      requestAnimationFrame(() => item.classList.add('animate-fade-in-up'));
-    } else {
-      const item = createErrorItem(result.fileName, result.error);
-      torrentResultsList.appendChild(item);
-      requestAnimationFrame(() => item.classList.add('animate-fade-in-up'));
-    }
-  }
+  torrentEntries = results.map(r => ({ ...r, selected: r.success }));
+  torrentPager.setData(torrentEntries);
 
-  if (successResults.length === 0) {
+  if (getSelectable(torrentEntries).length === 0) {
+    // 全部失败：隐藏无意义的批量操作头部，只保留错误列表
+    torrentResultsHeader.classList.add('hidden');
     showError(torrentError, '所有文件均无效，请检查下方的错误详情');
+    return;
   }
 
-  if (successResults.length >= 1) {
-    torrentCopyAllBtn.classList.remove('hidden');
-    torrentCopyAllBtn.disabled = false;
-    torrentSelectAll.checked = true;
-    updateResultCount(torrentCount, successResults.length, successResults.length);
-
-    torrentSelectAll.onchange = () => {
-      const checkboxes = torrentResultsList.querySelectorAll('.result-checkbox');
-      checkboxes.forEach(cb => { cb.checked = torrentSelectAll.checked; });
-      const count = getCheckedCount(torrentResultsList);
-      updateResultCount(torrentCount, count, successResults.length);
-      torrentCopyAllBtn.disabled = count === 0;
-    };
-
-    torrentResultsList.addEventListener('change', (e) => {
-      if (!e.target.classList.contains('result-checkbox')) return;
-      updateSelectAllState(torrentSelectAll, torrentResultsList);
-      const count = getCheckedCount(torrentResultsList);
-      updateResultCount(torrentCount, count, successResults.length);
-      torrentCopyAllBtn.disabled = count === 0;
-    });
-
-    torrentCopyAllBtn.onclick = () => {
-      const checkedItems = torrentResultsList.querySelectorAll('.result-checkbox:checked');
-      const uris = Array.from(checkedItems).map(cb => cb.closest('.result-item')._magnetUri).join('\n');
-      copyToClipboard(uris, torrentCopyAllBtn, '复制选中', '已复制');
-    };
-  }
+  torrentResultsHeader.classList.remove('hidden');
+  syncSelectionHeader(torrentEntries, torrentSelectAll, torrentCount, torrentCopyAllBtn, torrentRemoveBtn);
 }
 
-function createTorrentResultItem(result) {
+function createTorrentResultItem(entry) {
   const item = document.createElement('div');
-  item.className = 'flex items-start gap-2.5 px-4 py-2.5 border-b border-base-300 last:border-b-0 opacity-0 transition-colors hover:bg-base-200';
+  item.className = 'flex items-start gap-2.5 px-4 py-2.5 border-b border-base-300 last:border-b-0 opacity-0 transition-colors hover:bg-base-200 cursor-pointer select-none';
   item.classList.add('result-item');
-  item._magnetUri = result.magnetUri;
-  item._torrentInfo = {
-    infoHash: result.infoHash,
-    name: result.name,
-    trackers: result.trackers,
-  };
+  item._entry = entry;
+  item.classList.toggle('row-selected', entry.selected);
 
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.className = 'checkbox checkbox-primary checkbox-sm mt-0.5 shrink-0 result-checkbox';
-  checkbox.checked = true;
+  checkbox.checked = entry.selected;
 
   const content = document.createElement('div');
   content.className = 'flex-1 min-w-0 flex flex-col gap-1';
@@ -398,13 +566,14 @@ function createTorrentResultItem(result) {
   header.className = 'flex items-baseline gap-2';
 
   const nameSpan = document.createElement('span');
-  nameSpan.className = 'text-sm font-medium truncate';
-  nameSpan.textContent = result.fileName.replace(/\.torrent$/i, '');
-  nameSpan.title = result.fileName.replace(/\.torrent$/i, '');
+  nameSpan.className = 'text-sm font-medium truncate min-w-0';
+  nameSpan.textContent = entry.fileName.replace(/\.torrent$/i, '');
+  nameSpan.title = entry.fileName.replace(/\.torrent$/i, '');
 
   const hashSpan = document.createElement('span');
   hashSpan.className = 'text-[0.625rem] text-base-content/40 font-mono shrink-0 tracking-wide';
-  hashSpan.textContent = result.infoHash;
+  hashSpan.textContent = entry.infoHash.substring(0, 8) + '...';
+  hashSpan.title = entry.infoHash;
 
   header.appendChild(nameSpan);
   header.appendChild(hashSpan);
@@ -414,14 +583,14 @@ function createTorrentResultItem(result) {
 
   const textarea = document.createElement('textarea');
   textarea.className = 'textarea textarea-bordered flex-1 min-w-0 text-xs font-mono leading-relaxed bg-base-200 break-all resize-none h-11 py-1 focus:outline-none focus:ring-0';
-  textarea.value = result.magnetUri;
+  textarea.value = entry.magnetUri;
   textarea.readOnly = true;
 
   const copyBtn = document.createElement('button');
   copyBtn.className = 'btn btn-sm btn-outline btn-primary shrink-0';
   copyBtn.textContent = '复制';
   copyBtn.addEventListener('click', () => {
-    copyToClipboard(item._magnetUri, copyBtn);
+    copyToClipboard(entry.magnetUri, copyBtn);
     flashResultItem(item);
   });
 
@@ -480,17 +649,14 @@ async function copyToClipboard(text, btn, normalText = '复制链接', doneText 
 
 function flashBtn(btn, normalText, doneText) {
   btn.textContent = doneText;
-  const isOutline = btn.classList.contains('btn-outline');
-  if (isOutline) {
-    btn.classList.remove('btn-outline', 'btn-primary');
+  const originalClasses = btn.className;
+  if (btn.classList.contains('btn-outline')) {
+    btn.classList.remove('btn-outline', 'btn-primary', 'btn-error');
     btn.classList.add('btn-success');
   }
   setTimeout(() => {
     btn.textContent = normalText;
-    if (isOutline) {
-      btn.classList.remove('btn-success');
-      btn.classList.add('btn-outline', 'btn-primary');
-    }
+    btn.className = originalClasses;
   }, 2000);
 }
 
@@ -514,17 +680,6 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
-}
-
-function getCheckedCount(listEl) {
-  return listEl.querySelectorAll('.result-checkbox:checked').length;
-}
-
-function updateSelectAllState(selectAllEl, listEl) {
-  const total = listEl.querySelectorAll('.result-checkbox').length;
-  const checked = getCheckedCount(listEl);
-  selectAllEl.checked = checked === total;
-  selectAllEl.indeterminate = checked > 0 && checked < total;
 }
 
 function updateResultCount(el, selected, total) {

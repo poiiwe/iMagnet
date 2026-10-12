@@ -22,6 +22,34 @@
   transition: opacity 0.15s ease-out;
 }
 
+/* 磁力输入框：随内容自动增高，超限后内部滚动 */
+#magnet-input {
+  min-height: 9rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  word-break: break-all;
+}
+
+/* 结果行选中高亮 */
+.result-item.row-selected {
+  background-color: color-mix(in oklab, var(--color-primary) 10%, transparent);
+}
+.result-item.row-selected:hover {
+  background-color: color-mix(in oklab, var(--color-primary) 15%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up {
+    animation: none;
+    opacity: 1;
+  }
+  .tab-panel,
+  .transition-colors,
+  .transition-all {
+    transition: none;
+  }
+}
+
 /* floating label fallback */
 .peer:focus ~ label,
 .peer:not(:placeholder-shown) ~ label {
