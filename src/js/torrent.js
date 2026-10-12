@@ -122,7 +122,7 @@ export function generateTorrentBlob(magnetInfo) {
  * @returns {Promise<ArrayBuffer>}
  */
 async function awaitSha1(data) {
-  const subtle = window.crypto?.subtle || self.crypto?.subtle;
+  const subtle = globalThis.crypto?.subtle;
   if (subtle) {
     return subtle.digest('SHA-1', data);
   }
